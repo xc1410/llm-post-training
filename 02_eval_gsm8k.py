@@ -62,25 +62,26 @@ print(len(tokenizer(build_prompt(test_rows[0]['question']))['input_ids']))
 device='cuda' if torch.cuda.is_available() else 'cpu'
 model=AutoModelForCausalLM.from_pretrained(model_dir,dtype=torch.float32).to(device)
 
-def generate_answer(question):
-    inputs=tokenizer(build_prompt(question),return_tensors='pt').to(device)
-    out_ids=model.generate(input_ids=inputs['input_ids'],attention_mask=inputs['attention_mask'],max_new_tokens=512,do_sample=False,repetition_penalty=1.0,eos_token_id=[151645,151643])
-    return tokenizer.decode(out_ids[0,inputs['input_ids'].shape[1]:],skip_special_tokens=True)
 
-response=generate_answer(test_rows[0]['question'])
-print(response)
-print(extract_answer(response),golds[0],is_correct(extract_answer(response),golds[0]))
+tokenizer.padding_side='left'
+def generate_batch(questions):
+    prompts=[build_prompt(q) for q in questions]
+    inputs=tokenizer(prompts,return_tensors='pt',padding=True).to(device)
+    out_ids=model.generate(input_ids=inputs['input_ids'],attention_mask=inputs['attention_mask'],max_new_tokens=512,do_sample=False,repetition_penalty=1.0,eos_token_id=[151645,151643],pad_token_id=151643)
+    new_ids=out_ids[:,inputs['input_ids'].shape[1]:]
+    return tokenizer.batch_decode(new_ids,skip_special_tokens=True)
 
 results=[]
 start=time.perf_counter()
-for row in test_rows[:20]:
-    response=generate_answer(row['question'])
-    pred=extract_answer(response)
-    gold=gold_answer(row['answer'])
-    results.append({'question':row['question'],'response':response,'pred':pred,'gold':gold,'correct':is_correct(pred,gold)})
-print('用时',time.perf_counter()-start)
+for i in range(0,len(test_rows),64):
+    rows=test_rows[i:i+64]
+    responses=generate_batch([row['question'] for row in rows])
+    for row,response in zip(rows,responses):
+        pred=extract_answer(response)
+        gold=gold_answer(row['answer'])
+        results.append({'question':row['question'],'response':response,'pred':pred,'gold':gold,'correct':is_correct(pred,gold)})
+    print(len(results),'/',len(test_rows),time.perf_counter()-start)
 print('准确率',sum(r['correct'] for r in results)/len(results))
-
-with open('outputs/instruct_test20.jsonl','w',encoding='utf-8') as f:
+with open('outputs/instruct_test1319.jsonl','w',encoding='utf-8') as f:
     for r in results:
         f.write(json.dumps(r,ensure_ascii=False)+'\n')
